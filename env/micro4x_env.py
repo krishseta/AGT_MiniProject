@@ -14,6 +14,12 @@ from core.config import (
 
 
 class Micro4XEnv(ParallelEnv):
+    """PettingZoo Parallel env for Micro-4X.
+    
+    Observation is a flat Box vector: [action_mask | observation_flat].
+    The custom model splits it back into the mask and the 3-D grid tensor.
+    This avoids RLlib DictFlatteningPreprocessor bugs.
+    """
     metadata = {"name": "micro4x_v0", "render_modes": ["human"], "is_parallelizable": True}
 
     def __init__(self, seed=42, grid_h=24, grid_w=24, num_players=2, max_turns=MAX_TURNS, render_mode=None):
@@ -30,21 +36,17 @@ class Micro4XEnv(ParallelEnv):
 
         self.engine = GameEngine(seed=seed, h=grid_h, w=grid_w, num_players=num_players)
 
-        obs_high = float(max(NUM_TERRAIN_TYPES, NUM_UNIT_TYPES, num_players) + 1)
-        self._obs_space = spaces.Dict({
-            "observation": spaces.Box(
-                low=-1.0,
-                high=obs_high,
-                shape=(grid_h, grid_w, NUM_OBS_CHANNELS),
-                dtype=np.float16,
-            ),
-            "action_mask": spaces.Box(
-                low=0.0,
-                high=1.0,
-                shape=(grid_h * grid_w * NUM_ACTION_TYPES,),
-                dtype=np.float32,
-            ),
-        })
+        self._mask_size = grid_h * grid_w * NUM_ACTION_TYPES
+        self._obs_size = grid_h * grid_w * NUM_OBS_CHANNELS
+        total_size = self._mask_size + self._obs_size
+
+        # Flat Box: first _mask_size floats = action mask, rest = observation
+        self._obs_space = spaces.Box(
+            low=-1.0,
+            high=100.0,
+            shape=(total_size,),
+            dtype=np.float32,
+        )
 
         self._action_space = spaces.MultiDiscrete(
             np.full(grid_h * grid_w, NUM_ACTION_TYPES, dtype=np.int32)
@@ -55,6 +57,12 @@ class Micro4XEnv(ParallelEnv):
 
     def action_space(self, agent):
         return self._action_space
+
+    def _pack_obs(self, obs_3d, mask_3d):
+        """Pack observation grid and action mask into a single flat vector."""
+        mask_flat = mask_3d.reshape(-1).astype(np.float32)
+        obs_flat = obs_3d.reshape(-1).astype(np.float32)
+        return np.concatenate([mask_flat, obs_flat])
 
     def reset(self, seed=None, options=None):
         if seed is not None:
@@ -67,10 +75,7 @@ class Micro4XEnv(ParallelEnv):
         for i, agent in enumerate(self.agents):
             obs = self.engine.get_observation(i)
             mask = self.engine.get_action_mask(i)
-            observations[agent] = {
-                "observation": obs,
-                "action_mask": mask.reshape(-1).astype(np.float32),
-            }
+            observations[agent] = self._pack_obs(obs, mask)
             infos[agent] = {}
 
         return observations, infos
@@ -103,12 +108,10 @@ class Micro4XEnv(ParallelEnv):
 
             terminated = not self.engine.player_alive[i]
 
-            observations[agent] = {
-                "observation": obs_dict[i],
-                "action_mask": infos_dict[i]["action_mask"].reshape(-1).astype(
-                    np.float32
-                ),
-            }
+            observations[agent] = self._pack_obs(
+                obs_dict[i],
+                infos_dict[i]["action_mask"],
+            )
             rewards[agent] = float(rewards_arr[i])
             terminations[agent] = bool(terminated)
             truncations[agent] = bool(truncated_all and not terminated)

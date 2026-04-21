@@ -11,6 +11,15 @@ from core.config import NUM_OBS_CHANNELS, NUM_ACTION_TYPES
 GRID_H = 24
 GRID_W = 24
 TILES = GRID_H * GRID_W
+MASK_SIZE = TILES * NUM_ACTION_TYPES
+OBS_SIZE = TILES * NUM_OBS_CHANNELS
+
+
+def _unpack(flat_obs):
+    """Unpack flat obs vector into (action_mask_flat, obs_3d)."""
+    mask = flat_obs[:MASK_SIZE]
+    obs = flat_obs[MASK_SIZE:].reshape(GRID_H, GRID_W, NUM_OBS_CHANNELS)
+    return mask, obs
 
 
 def test_pettingzoo_reset():
@@ -23,13 +32,13 @@ def test_pettingzoo_reset():
 
     assert set(observations.keys()) == {"player_0", "player_1"}
     for agent in observations:
-        obs = observations[agent]
-        assert "observation" in obs
-        assert "action_mask" in obs
-        assert obs["observation"].shape == (GRID_H, GRID_W, NUM_OBS_CHANNELS)
-        assert obs["action_mask"].shape == (TILES * NUM_ACTION_TYPES,)
-        assert obs["action_mask"].dtype == np.float32
-        print(f"  {agent}: obs={obs['observation'].shape}, mask_sum={int(np.sum(obs['action_mask']))}")
+        flat = observations[agent]
+        assert flat.shape == (MASK_SIZE + OBS_SIZE,), f"Unexpected shape: {flat.shape}"
+        assert flat.dtype == np.float32
+        mask, obs = _unpack(flat)
+        assert obs.shape == (GRID_H, GRID_W, NUM_OBS_CHANNELS)
+        assert mask.shape == (MASK_SIZE,)
+        print(f"  {agent}: obs={obs.shape}, mask_sum={int(np.sum(mask))}")
 
     print("  PASSED\n")
 
@@ -45,7 +54,7 @@ def test_pettingzoo_step():
     for t in range(5):
         actions = {}
         for agent in env.agents:
-            mask = observations[agent]["action_mask"]
+            mask, _ = _unpack(observations[agent])
             flat_mask = mask.reshape(TILES, NUM_ACTION_TYPES)
             action = np.zeros(TILES, dtype=np.int32)
             for tile_idx in range(TILES):
@@ -62,9 +71,8 @@ def test_pettingzoo_step():
 
         for agent in env.agents:
             if agent in observations:
-                obs = observations[agent]
                 obs_space = env.observation_space(agent)
-                assert obs_space.contains(obs), f"Obs out of space for {agent}"
+                assert obs_space.contains(observations[agent]), f"Obs out of space for {agent}"
 
     print("  PASSED\n")
 
@@ -78,7 +86,7 @@ def test_action_mask_validity():
     observations, _ = env.reset()
 
     for agent in env.agents:
-        mask = observations[agent]["action_mask"]
+        mask, _ = _unpack(observations[agent])
         flat_mask = mask.reshape(TILES, NUM_ACTION_TYPES)
 
         for tile_idx in range(TILES):

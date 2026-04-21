@@ -1,5 +1,16 @@
+"""
+PPO Baseline — shared-policy self-play on Micro-4X.
+
+Both players share a single policy ("shared_policy") so the agent
+learns to play from either side of the board.
+
+Usage:
+    python training/ppo_baseline.py                     # fresh run
+    python training/ppo_baseline.py --resume latest     # resume
+    python training/ppo_baseline.py --iterations 200    # longer run
+"""
+
 import numpy as np
-import gymnasium
 import argparse
 import glob
 
@@ -7,38 +18,24 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from env.micro4x_env import Micro4XEnv
-from supersuit import pettingzoo_env_to_vec_env_v1, concat_vec_envs_v1
 
-
-def train_ppo(resume_checkpoint=None):
+def train_ppo(resume_checkpoint=None, num_iterations=100):
     import ray
     from ray.rllib.algorithms.ppo import PPOConfig
     from ray.rllib.models import ModelCatalog
     from ray.tune.registry import register_env
 
     from env.action_mask_model import GridWiseActionMaskModel
+    from training.rllib_wrapper import Micro4XMultiAgentEnv
+    from env.micro4x_env import Micro4XEnv
 
-    # Register custom model
+    # ── Register custom model ──
     ModelCatalog.register_custom_model(
         "grid_action_mask", GridWiseActionMaskModel
     )
 
-    # ---- ENV CREATOR ----
-    def env_creator(config):
-        env = Micro4XEnv(
-            grid_h=config.get("grid_h", 24),
-            grid_w=config.get("grid_w", 24),
-            max_turns=500
-        )
-        env = pettingzoo_env_to_vec_env_v1(env)
-
-        # ⚠️ keep this small to avoid oversubscription
-        env = concat_vec_envs_v1(env, 4)
-
-        return env
-
-    register_env("micro4x_vec", env_creator)
+    # ── Register environment (MultiAgentEnv wrapper) ──
+    register_env("micro4x", lambda cfg: Micro4XMultiAgentEnv(cfg))
 
     ray.init(
         ignore_reinit_error=True,
@@ -48,30 +45,46 @@ def train_ppo(resume_checkpoint=None):
 
     grid_h, grid_w = 24, 24
 
+    # ── Observation / action spaces for policy spec ──
+    dummy_env = Micro4XEnv(grid_h=grid_h, grid_w=grid_w)
+    obs_space = dummy_env.observation_space("player_0")
+    act_space = dummy_env.action_space("player_0")
+
+    policies = {
+        "shared_policy": (None, obs_space, act_space, {}),
+    }
+
+    def policy_mapping_fn(agent_id, episode, worker, **kwargs):
+        return "shared_policy"
+
+    # ── PPO Config ──
     config = (
         PPOConfig()
         .environment(
-            "micro4x_vec",
+            "micro4x",
             env_config={
                 "grid_h": grid_h,
                 "grid_w": grid_w,
+                "max_turns": 500,
             },
         )
-        # ✅ REQUIRED for custom_model
         .api_stack(
             enable_rl_module_and_learner=False,
             enable_env_runner_and_connector_v2=False,
         )
         .framework("torch")
+        .multi_agent(
+            policies=policies,
+            policy_mapping_fn=policy_mapping_fn,
+        )
         .training(
-            # Learning
             lr=2e-4,
             gamma=0.995,
             lambda_=0.95,
 
             train_batch_size=8000,
-            minibatch_size=1024,     # ✅ FIXED (was sgd_minibatch_size)
-            num_epochs=3,            # ✅ FIXED (was num_sgd_iter)
+            minibatch_size=1024,
+            num_epochs=3,
 
             clip_param=0.2,
             vf_clip_param=10.0,
@@ -99,10 +112,7 @@ def train_ppo(resume_checkpoint=None):
         .resources(num_gpus=1)
     )
 
-    # ❌ REMOVE env_runners (conflicts with old API)
-    # ❌ DO NOT add rollouts either (deprecated mess)
-
-    # ---- CHECKPOINT RESUME ----
+    # ── Build / restore ──
     if resume_checkpoint:
         print(f"Restoring from checkpoint: {resume_checkpoint}")
         algo = config.build_algo()
@@ -118,18 +128,24 @@ def train_ppo(resume_checkpoint=None):
     )
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    num_iterations = 100
-
     try:
         for i in range(num_iterations):
             result = algo.train()
 
-            mean_reward = result.get("episode_reward_mean", 0.0)
-            episode_len = result.get("episode_len_mean", 0.0)
+            # Extract metrics — handle different result structures
+            env_runners = result.get("env_runners", result)
+            mean_reward = (
+                env_runners.get("episode_reward_mean")
+                or result.get("episode_reward_mean", 0.0)
+            )
+            episode_len = (
+                env_runners.get("episode_len_mean")
+                or result.get("episode_len_mean", 0.0)
+            )
 
-            if np.isnan(mean_reward):
+            if mean_reward is None or np.isnan(mean_reward):
                 mean_reward = 0.0
-            if np.isnan(episode_len):
+            if episode_len is None or np.isnan(episode_len):
                 episode_len = 0.0
 
             print(
@@ -165,7 +181,6 @@ def find_latest_checkpoint(checkpoint_dir):
     """Find the most recently modified checkpoint directory."""
     if not os.path.isdir(checkpoint_dir):
         return None
-    # RLlib saves checkpoints as directories like checkpoint_000001/
     candidates = glob.glob(os.path.join(checkpoint_dir, "checkpoint_*"))
     if not candidates:
         return None
@@ -198,4 +213,4 @@ if __name__ == "__main__":
             print("No existing checkpoints found — starting fresh.")
             resume_path = None
 
-    train_ppo(resume_checkpoint=resume_path)
+    train_ppo(resume_checkpoint=resume_path, num_iterations=args.iterations)

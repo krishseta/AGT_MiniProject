@@ -1,3 +1,15 @@
+"""
+MAPPO Training — Multi-Agent PPO with per-player or shared policies.
+
+Modes:
+    mappo    — separate policy per player (independent learning)
+    selfplay — single shared policy for both players
+
+Usage:
+    python training/mappo_train.py --mode mappo
+    python training/mappo_train.py --mode selfplay
+"""
+
 import numpy as np
 import os
 import sys
@@ -12,10 +24,14 @@ def train_mappo():
     import ray
     from ray.rllib.algorithms.ppo import PPOConfig
     from ray.rllib.models import ModelCatalog
+    from ray.tune.registry import register_env
+    from training.rllib_wrapper import Micro4XMultiAgentEnv
 
     ModelCatalog.register_custom_model(
         "grid_action_mask", GridWiseActionMaskModel
     )
+
+    register_env("micro4x", lambda cfg: Micro4XMultiAgentEnv(cfg))
 
     ray.init(
         ignore_reinit_error=True,
@@ -26,25 +42,13 @@ def train_mappo():
     grid_h, grid_w = 24, 24
     num_players = 2
 
-    def env_creator(config):
-        return Micro4XEnv(
-            seed=config.get("seed", 42),
-            grid_h=config.get("grid_h", grid_h),
-            grid_w=config.get("grid_w", grid_w),
-            num_players=config.get("num_players", num_players),
-            max_turns=config.get("max_turns", 500),
-        )
-
-    from ray.tune.registry import register_env
-    register_env("micro4x_v0", env_creator)
-
+    # ── Per-player policies ──
+    dummy_env = Micro4XEnv(grid_h=grid_h, grid_w=grid_w, num_players=num_players)
     policies = {
         f"player_{i}": (
             None,
-            Micro4XEnv(grid_h=grid_h, grid_w=grid_w, num_players=num_players)
-            .observation_space(f"player_{i}"),
-            Micro4XEnv(grid_h=grid_h, grid_w=grid_w, num_players=num_players)
-            .action_space(f"player_{i}"),
+            dummy_env.observation_space(f"player_{i}"),
+            dummy_env.action_space(f"player_{i}"),
             {},
         )
         for i in range(num_players)
@@ -56,7 +60,7 @@ def train_mappo():
     config = (
         PPOConfig()
         .environment(
-            "micro4x_v0",
+            "micro4x",
             env_config={
                 "seed": 42,
                 "grid_h": grid_h,
@@ -93,11 +97,10 @@ def train_mappo():
                     "num_action_types": 31,
                 },
                 "vf_share_layers": True,
+                "_disable_preprocessor_api": True,
             },
         )
-        .resources(
-            num_gpus=1,
-        )
+        .resources(num_gpus=1)
     )
 
     algo = config.build_algo()
@@ -108,36 +111,48 @@ def train_mappo():
     best_reward = float("-inf")
     num_iterations = 1000
 
-    for i in range(num_iterations):
-        result = algo.train()
+    try:
+        for i in range(num_iterations):
+            result = algo.train()
 
-        env_runners = result.get("env_runners", result)
-        p0_reward = env_runners.get("policy_reward_mean", {}).get("player_0")
-        p1_reward = env_runners.get("policy_reward_mean", {}).get("player_1")
-        ep_len = env_runners.get("episode_len_mean")
+            env_runners = result.get("env_runners", result)
+            p0_reward = env_runners.get("policy_reward_mean", {}).get("player_0")
+            p1_reward = env_runners.get("policy_reward_mean", {}).get("player_1")
+            ep_len = env_runners.get("episode_len_mean")
 
-        if p0_reward is None or np.isnan(p0_reward):
-            p0_reward = 0.0
-        if p1_reward is None or np.isnan(p1_reward):
-            p1_reward = 0.0
-        if ep_len is None or np.isnan(ep_len):
-            ep_len = 0.0
+            if p0_reward is None or np.isnan(p0_reward):
+                p0_reward = 0.0
+            if p1_reward is None or np.isnan(p1_reward):
+                p1_reward = 0.0
+            if ep_len is None or np.isnan(ep_len):
+                ep_len = 0.0
 
-        print(
-            f"Iter {i + 1:4d} | "
-            f"P0={p0_reward:8.2f} | "
-            f"P1={p1_reward:8.2f} | "
-            f"ep_len={ep_len:6.1f}"
-        )
+            print(
+                f"Iter {i + 1:4d} | "
+                f"P0={p0_reward:8.2f} | "
+                f"P1={p1_reward:8.2f} | "
+                f"ep_len={ep_len:6.1f}"
+            )
 
-        combined = p0_reward + p1_reward
-        if combined > best_reward:
-            best_reward = combined
-            save_path = algo.save(checkpoint_dir)
-            print(f"  -> New best! Saved to {save_path}")
+            combined = p0_reward + p1_reward
+            if combined > best_reward:
+                best_reward = combined
+                save_path = algo.save(checkpoint_dir)
+                print(f"  -> New best! Saved to {save_path}")
 
-    algo.stop()
-    ray.shutdown()
+            if (i + 1) % 50 == 0:
+                save_path = algo.save(checkpoint_dir)
+                print(f"  -> Periodic save: {save_path}")
+
+    except KeyboardInterrupt:
+        print("\nInterrupted! Saving checkpoint...")
+        save_path = algo.save(checkpoint_dir)
+        print(f"Saved to {save_path}")
+
+    finally:
+        algo.stop()
+        ray.shutdown()
+
     print(f"\nMAPPO training complete. Best combined reward: {best_reward:.2f}")
 
 
@@ -145,10 +160,14 @@ def train_self_play():
     import ray
     from ray.rllib.algorithms.ppo import PPOConfig
     from ray.rllib.models import ModelCatalog
+    from ray.tune.registry import register_env
+    from training.rllib_wrapper import Micro4XMultiAgentEnv
 
     ModelCatalog.register_custom_model(
         "grid_action_mask", GridWiseActionMaskModel
     )
+
+    register_env("micro4x", lambda cfg: Micro4XMultiAgentEnv(cfg))
 
     ray.init(
         ignore_reinit_error=True,
@@ -158,18 +177,6 @@ def train_self_play():
 
     grid_h, grid_w = 24, 24
     num_players = 2
-
-    def env_creator(config):
-        return Micro4XEnv(
-            seed=config.get("seed", 42),
-            grid_h=config.get("grid_h", grid_h),
-            grid_w=config.get("grid_w", grid_w),
-            num_players=config.get("num_players", num_players),
-            max_turns=config.get("max_turns", 500),
-        )
-
-    from ray.tune.registry import register_env
-    register_env("micro4x_v0", env_creator)
 
     dummy_env = Micro4XEnv(grid_h=grid_h, grid_w=grid_w, num_players=num_players)
 
@@ -188,7 +195,7 @@ def train_self_play():
     config = (
         PPOConfig()
         .environment(
-            "micro4x_v0",
+            "micro4x",
             env_config={
                 "seed": 42,
                 "grid_h": grid_h,
@@ -225,11 +232,10 @@ def train_self_play():
                     "num_action_types": 31,
                 },
                 "vf_share_layers": True,
+                "_disable_preprocessor_api": True,
             },
         )
-        .resources(
-            num_gpus=1,
-        )
+        .resources(num_gpus=1)
     )
 
     algo = config.build_algo()
@@ -237,32 +243,46 @@ def train_self_play():
     checkpoint_dir = os.path.join(os.path.dirname(__file__), "..", "checkpoints_selfplay")
     os.makedirs(checkpoint_dir, exist_ok=True)
 
+    best_reward = float("-inf")
     num_iterations = 1000
 
-    for i in range(num_iterations):
-        result = algo.train()
-        env_runners = result.get("env_runners", result)
-        mean_reward = env_runners.get("episode_reward_mean")
-        ep_len = env_runners.get("episode_len_mean")
+    try:
+        for i in range(num_iterations):
+            result = algo.train()
+            env_runners = result.get("env_runners", result)
+            mean_reward = env_runners.get("episode_reward_mean")
+            ep_len = env_runners.get("episode_len_mean")
 
-        if mean_reward is None or np.isnan(mean_reward):
-            mean_reward = 0.0
-        if ep_len is None or np.isnan(ep_len):
-            ep_len = 0.0
+            if mean_reward is None or np.isnan(mean_reward):
+                mean_reward = 0.0
+            if ep_len is None or np.isnan(ep_len):
+                ep_len = 0.0
 
-        print(
-            f"Iter {i + 1:4d} | "
-            f"reward_mean={mean_reward:8.2f} | "
-            f"ep_len={ep_len:6.1f}"
-        )
+            print(
+                f"Iter {i + 1:4d} | "
+                f"reward_mean={mean_reward:8.2f} | "
+                f"ep_len={ep_len:6.1f}"
+            )
 
-        if (i + 1) % 50 == 0:
-            save_path = algo.save(checkpoint_dir)
-            print(f"  Checkpoint saved to {save_path}")
+            if mean_reward > best_reward:
+                best_reward = mean_reward
+                save_path = algo.save(checkpoint_dir)
+                print(f"  -> New best! Saved to {save_path}")
 
-    algo.stop()
-    ray.shutdown()
-    print("\nSelf-play training complete.")
+            if (i + 1) % 50 == 0:
+                save_path = algo.save(checkpoint_dir)
+                print(f"  -> Periodic save: {save_path}")
+
+    except KeyboardInterrupt:
+        print("\nInterrupted! Saving checkpoint...")
+        save_path = algo.save(checkpoint_dir)
+        print(f"Saved to {save_path}")
+
+    finally:
+        algo.stop()
+        ray.shutdown()
+
+    print(f"\nSelf-play training complete. Best reward: {best_reward:.2f}")
 
 
 if __name__ == "__main__":

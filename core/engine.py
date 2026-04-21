@@ -142,32 +142,32 @@ class GameEngine:
         return observations, rewards, terminal, infos
 
     def get_observation(self, player_id):
-        obs = np.full((self.h, self.w, NUM_OBS_CHANNELS), -1.0, dtype=np.float16)
+        obs = np.full((self.h, self.w, NUM_OBS_CHANNELS), -1.0, dtype=np.float32)
 
         vis = compute_visibility(player_id, self.units, self.economy, self.terrain, self.h, self.w)
 
-        obs[:, :, 6] = vis.astype(np.float16)
-        obs[:, :, 0] = np.where(vis, self.terrain.astype(np.float16), -1.0)
+        obs[:, :, 6] = vis.astype(np.float32)
+        obs[:, :, 0] = np.where(vis, self.terrain.astype(np.float32), -1.0)
 
-        infrastructure = self.economy.infrastructure.astype(np.float16)
+        infrastructure = self.economy.infrastructure.astype(np.float32)
         obs[:, :, 1] = np.where(vis, infrastructure, -1.0)
 
         ownership = compute_ownership_grid(self.economy, self.h, self.w)
-        obs[:, :, 2] = np.where(vis, ownership.astype(np.float16), -1.0)
+        obs[:, :, 2] = np.where(vis, ownership.astype(np.float32), -1.0)
 
         unit_grid = self.units.build_unit_grid(self.h, self.w)
         has_unit = unit_grid >= 0
 
-        unit_present = has_unit.astype(np.float16)
+        unit_present = has_unit.astype(np.float32)
         obs[:, :, 3] = np.where(vis, unit_present, -1.0)
 
-        unit_types = np.full((self.h, self.w), -1.0, dtype=np.float16)
+        unit_types = np.full((self.h, self.w), -1.0, dtype=np.float32)
         if np.any(has_unit):
             ids = unit_grid[has_unit]
-            unit_types[has_unit] = self.units.unit_type[ids].astype(np.float16)
+            unit_types[has_unit] = self.units.unit_type[ids].astype(np.float32)
         obs[:, :, 4] = np.where(vis, unit_types, -1.0)
 
-        unit_health = np.full((self.h, self.w), -1.0, dtype=np.float16)
+        unit_health = np.full((self.h, self.w), -1.0, dtype=np.float32)
         if np.any(has_unit):
             ids = unit_grid[has_unit]
             unit_health[has_unit] = self.units.hp[ids] / self.units.max_hp[ids]

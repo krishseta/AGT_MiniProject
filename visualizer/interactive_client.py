@@ -47,6 +47,7 @@ class InteractiveClient:
         self.game_over_msg = ""
 
         self.env = Micro4XEnv(grid_h=grid_h, grid_w=grid_w)
+        self._mask_size = grid_h * grid_w * NUM_ACTION_TYPES
         self.obs, _ = self.env.reset()
 
         self.selected_pos = None
@@ -100,7 +101,9 @@ class InteractiveClient:
             return []
         x, y = self.selected_pos
         base_idx = (y * self.grid_w + x) * NUM_ACTION_TYPES
-        mask = self.obs["player_0"]["action_mask"][base_idx: base_idx + NUM_ACTION_TYPES]
+        # Flat obs: first _mask_size floats = action mask, rest = observation
+        full_mask = self.obs["player_0"][:self._mask_size]
+        mask = full_mask[base_idx: base_idx + NUM_ACTION_TYPES]
         flat_coord = y * self.grid_w + x
         queued_act = int(self.human_action_grid[flat_coord])
 
@@ -456,14 +459,15 @@ class InteractiveClient:
 
     def _get_model_actions(self):
         """Get CPU actions from the neural net model."""
-        cpu_obs = self.obs["player_1"]["observation"]
-        cpu_mask = self.obs["player_1"]["action_mask"]
+        flat = self.obs["player_1"]
+        cpu_mask = flat[:self._mask_size]
+        cpu_obs_flat = flat[self._mask_size:]
 
-        obs_t = torch.tensor(cpu_obs).unsqueeze(0)
-        mask_t = torch.tensor(cpu_mask).unsqueeze(0)
+        # Model now expects flat input: [mask | obs]
+        flat_t = torch.tensor(flat).unsqueeze(0)
 
         with torch.no_grad():
-            input_dict = {"obs": {"observation": obs_t, "action_mask": mask_t}}
+            input_dict = {"obs": flat_t}
             logits, _ = self.cpu_model(input_dict, None, None)
 
             grid_logits = logits.squeeze(0).view(self.grid_h * self.grid_w, NUM_ACTION_TYPES)
