@@ -37,6 +37,7 @@ class GameEngine:
         self.units = None
         self.economy = None
         self.player_alive = None
+        self.capital_cities = None
         self.turn_log = []
         self._build(seed)
 
@@ -47,6 +48,7 @@ class GameEngine:
         self.units = UnitManager()
         self.economy = EconomyManager(self.num_players, self.h, self.w)
         self.player_alive = np.ones(self.num_players, dtype=np.bool_)
+        self.capital_cities = np.full((self.num_players, 2), -1, dtype=np.int32)
         self.turn = 0
         self.turn_log = []
         self._initialize_players()
@@ -55,6 +57,7 @@ class GameEngine:
         for p in range(self.num_players):
             sy, sx = int(self.start_positions[p, 0]), int(self.start_positions[p, 1])
             self.economy.initialize_city(sy, sx, p)
+            self.capital_cities[p] = [sy, sx]
             self.economy.currency[p] = STARTING_CURRENCY
 
             candidates = np.array([sy, sx]) + DIRECTION_DELTAS[1:]
@@ -139,32 +142,32 @@ class GameEngine:
         return observations, rewards, terminal, infos
 
     def get_observation(self, player_id):
-        obs = np.full((self.h, self.w, NUM_OBS_CHANNELS), -1.0, dtype=np.float32)
+        obs = np.full((self.h, self.w, NUM_OBS_CHANNELS), -1.0, dtype=np.float16)
 
         vis = compute_visibility(player_id, self.units, self.economy, self.terrain, self.h, self.w)
 
-        obs[:, :, 6] = vis.astype(np.float32)
-        obs[:, :, 0] = np.where(vis, self.terrain.astype(np.float32), -1.0)
+        obs[:, :, 6] = vis.astype(np.float16)
+        obs[:, :, 0] = np.where(vis, self.terrain.astype(np.float16), -1.0)
 
-        infrastructure = self.economy.infrastructure.astype(np.float32)
+        infrastructure = self.economy.infrastructure.astype(np.float16)
         obs[:, :, 1] = np.where(vis, infrastructure, -1.0)
 
         ownership = compute_ownership_grid(self.economy, self.h, self.w)
-        obs[:, :, 2] = np.where(vis, ownership.astype(np.float32), -1.0)
+        obs[:, :, 2] = np.where(vis, ownership.astype(np.float16), -1.0)
 
         unit_grid = self.units.build_unit_grid(self.h, self.w)
         has_unit = unit_grid >= 0
 
-        unit_present = has_unit.astype(np.float32)
+        unit_present = has_unit.astype(np.float16)
         obs[:, :, 3] = np.where(vis, unit_present, -1.0)
 
-        unit_types = np.full((self.h, self.w), -1.0, dtype=np.float32)
+        unit_types = np.full((self.h, self.w), -1.0, dtype=np.float16)
         if np.any(has_unit):
             ids = unit_grid[has_unit]
-            unit_types[has_unit] = self.units.unit_type[ids].astype(np.float32)
+            unit_types[has_unit] = self.units.unit_type[ids].astype(np.float16)
         obs[:, :, 4] = np.where(vis, unit_types, -1.0)
 
-        unit_health = np.full((self.h, self.w), -1.0, dtype=np.float32)
+        unit_health = np.full((self.h, self.w), -1.0, dtype=np.float16)
         if np.any(has_unit):
             ids = unit_grid[has_unit]
             unit_health[has_unit] = self.units.hp[ids] / self.units.max_hp[ids]
@@ -577,21 +580,48 @@ class GameEngine:
                     self.resource_caches[ci] = [-1, -1]
 
     def _check_terminal(self, rewards):
+        capital_captured = False
+        winner_by_capture = -1
+
         for p in range(self.num_players):
-            has_cities = self.economy.player_city_count(p) > 0
-            has_units = self.units.count_player_alive(p) > 0
-            if not has_cities and not has_units:
+            if not self.player_alive[p]:
+                continue
+            cy, cx = self.capital_cities[p]
+            owner = self.economy.city_owner[cy, cx]
+            if owner != p and owner != -1:
+                capital_captured = True
+                winner_by_capture = owner
                 self.player_alive[p] = False
+                break
 
         alive_count = int(np.sum(self.player_alive))
-        terminal = (alive_count <= 1) or (self.turn >= MAX_TURNS)
+        terminal = capital_captured or (alive_count <= 1) or (self.turn >= MAX_TURNS)
 
-        if terminal and alive_count == 1:
-            winner = int(np.where(self.player_alive)[0][0])
-            rewards[winner] += REWARD_WIN
-            for p in range(self.num_players):
-                if not self.player_alive[p]:
-                    rewards[p] += REWARD_LOSS
+        if terminal:
+            if capital_captured:
+                for p in range(self.num_players):
+                    if p == winner_by_capture:
+                        rewards[p] += REWARD_WIN
+                    else:
+                        rewards[p] += REWARD_LOSS
+            elif alive_count == 1:
+                winner = int(np.where(self.player_alive)[0][0])
+                for p in range(self.num_players):
+                    if p == winner:
+                        rewards[p] += REWARD_WIN
+                    else:
+                        rewards[p] += REWARD_LOSS
+            else:
+                scores = np.zeros(self.num_players)
+                for p in range(self.num_players):
+                    if self.player_alive[p]:
+                        scores[p] = np.sum(self.economy.infrastructure[self.economy.city_owner == p])
+                winner = int(np.argmax(scores))
+                for p in range(self.num_players):
+                    if p == winner and self.player_alive[p]:
+                        rewards[p] += REWARD_WIN
+                    else:
+                        rewards[p] += REWARD_LOSS
 
         return terminal
 

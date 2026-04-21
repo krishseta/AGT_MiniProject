@@ -71,12 +71,12 @@ DIRECTION_DELTAS = np.array([
     [-1, -1],
 ], dtype=np.int32)
 
-GRID_WIDTH = 32
-GRID_HEIGHT = 32
+GRID_WIDTH = 24
+GRID_HEIGHT = 24
 NUM_PLAYERS = 4
 MAX_UNITS = 128
 MAX_RESOURCE_CACHES = 8
-MAX_TURNS = 200
+MAX_TURNS = 500
 
 NUM_TERRAIN_TYPES = 5
 NUM_UNIT_TYPES = 5
@@ -87,7 +87,7 @@ NUM_OBS_CHANNELS = 7
 GAMMA = 0.99
 
 TERRAIN_MOVE_COST = np.array([1, 2, 2, 1, 1], dtype=np.int32)
-TERRAIN_DEF_MOD = np.array([1.0, 1.5, 1.5, 0.8, 1.5], dtype=np.float32)
+TERRAIN_DEF_MOD = np.array([1.0, 1.5, 1.5, 0.8, 2.0], dtype=np.float32)
 TERRAIN_VISION = np.array([1, 1, 2, 1, 2], dtype=np.int32)
 TERRAIN_LOS_BLOCK = np.array([False, True, False, False, False])
 

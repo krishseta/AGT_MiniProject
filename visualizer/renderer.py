@@ -21,18 +21,18 @@ SIDEBAR_WIDTH = 280
 FPS = 10
 
 TERRAIN_COLORS = {
-    TerrainType.PLAINS: (144, 190, 109),
-    TerrainType.FOREST: (55, 114, 55),
-    TerrainType.MOUNTAIN: (139, 137, 137),
-    TerrainType.WATER: (64, 128, 200),
-    TerrainType.CITY: (210, 180, 140),
+    TerrainType.PLAINS: (180, 220, 150),
+    TerrainType.FOREST: (34, 100, 34),
+    TerrainType.MOUNTAIN: (120, 110, 110),
+    TerrainType.WATER: (60, 170, 250),
+    TerrainType.CITY: (230, 200, 150),
 }
 
 PLAYER_COLORS = [
-    (66, 135, 245),
-    (235, 64, 52),
-    (46, 204, 113),
-    (241, 196, 15),
+    (255, 50, 50),     # Red
+    (0, 255, 255),     # Cyan
+    (255, 220, 0),     # Yellow
+    (200, 50, 255),    # Purple
 ]
 
 UNIT_SYMBOLS = {
@@ -40,13 +40,13 @@ UNIT_SYMBOLS = {
     UnitType.CAVALRY: "C",
     UnitType.ARTILLERY: "A",
     UnitType.KNIGHT: "K",
-    UnitType.SCOUT: "S",
+    UnitType.HEAVY: "H",
 }
 
 
 class Visualizer:
 
-    def __init__(self, engine, grid_h=16, grid_w=16):
+    def __init__(self, engine, grid_h=24, grid_w=24):
         pygame.init()
         self.engine = engine
         self.grid_h = grid_h
@@ -243,7 +243,35 @@ class Visualizer:
             self.screen.blit(evt_text, (sidebar_x + 10, y_offset))
             y_offset += 16
 
-        y_offset = self.screen_h - 80
+        y_offset = self.screen_h - 200
+        pygame.draw.line(
+            self.screen, (80, 80, 100),
+            (sidebar_x + 10, y_offset), (sidebar_x + SIDEBAR_WIDTH - 10, y_offset),
+        )
+        y_offset += 10
+
+        legend_title = self.font.render("LEGEND:", True, (200, 200, 220))
+        self.screen.blit(legend_title, (sidebar_x + 10, y_offset))
+        y_offset += 20
+        
+        symbols_str = " ".join([f"{k.name[:1]}={v}" for k, v in UNIT_SYMBOLS.items()])
+        legend_symbols = self.font.render(symbols_str, True, (180, 180, 200))
+        self.screen.blit(legend_symbols, (sidebar_x + 10, y_offset))
+        y_offset += 20
+        
+        terrain_str = "Plains Forest Mntn Water City"
+        legend_terrain = self.font.render(terrain_str, True, (180, 180, 200))
+        self.screen.blit(legend_terrain, (sidebar_x + 10, y_offset))
+        y_offset += 10
+
+        from core.config import TerrainType
+        tx = sidebar_x + 10
+        for t_type in [TerrainType.PLAINS, TerrainType.FOREST, TerrainType.MOUNTAIN, TerrainType.WATER, TerrainType.CITY]:
+            pygame.draw.rect(self.screen, TERRAIN_COLORS[t_type], (tx, y_offset, 25, 15))
+            tx += 53
+            
+        y_offset += 30
+
         pygame.draw.line(
             self.screen, (80, 80, 100),
             (sidebar_x + 10, y_offset), (sidebar_x + SIDEBAR_WIDTH - 10, y_offset),
@@ -464,8 +492,8 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--replay", type=str, default=None)
-    parser.add_argument("--grid-h", type=int, default=16)
-    parser.add_argument("--grid-w", type=int, default=16)
+    parser.add_argument("--grid-h", type=int, default=24)
+    parser.add_argument("--grid-w", type=int, default=24)
     parser.add_argument("--players", type=int, default=2)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()

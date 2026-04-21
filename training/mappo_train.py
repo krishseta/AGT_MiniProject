@@ -18,12 +18,12 @@ def train_mappo():
     )
 
     ray.init(
-        num_cpus=4,
+        ignore_reinit_error=True,
+        num_cpus=8,
         num_gpus=1,
-        object_store_memory=2 * 1024 * 1024 * 1024,
     )
 
-    grid_h, grid_w = 16, 16
+    grid_h, grid_w = 24, 24
     num_players = 2
 
     def env_creator(config):
@@ -32,7 +32,7 @@ def train_mappo():
             grid_h=config.get("grid_h", grid_h),
             grid_w=config.get("grid_w", grid_w),
             num_players=config.get("num_players", num_players),
-            max_turns=config.get("max_turns", 200),
+            max_turns=config.get("max_turns", 500),
         )
 
     from ray.tune.registry import register_env
@@ -62,8 +62,12 @@ def train_mappo():
                 "grid_h": grid_h,
                 "grid_w": grid_w,
                 "num_players": num_players,
-                "max_turns": 200,
+                "max_turns": 500,
             },
+        )
+        .api_stack(
+            enable_rl_module_and_learner=False,
+            enable_env_runner_and_connector_v2=False,
         )
         .framework("torch")
         .multi_agent(
@@ -78,8 +82,8 @@ def train_mappo():
             entropy_coeff=0.01,
             vf_loss_coeff=0.5,
             train_batch_size=4096,
-            sgd_minibatch_size=512,
-            num_sgd_iter=10,
+            minibatch_size=512,
+            num_epochs=5,
             model={
                 "custom_model": "grid_action_mask",
                 "custom_model_config": {
@@ -88,18 +92,15 @@ def train_mappo():
                     "num_obs_channels": 7,
                     "num_action_types": 31,
                 },
+                "vf_share_layers": True,
             },
-        )
-        .env_runners(
-            num_env_runners=2,
-            rollout_fragment_length=256,
         )
         .resources(
             num_gpus=1,
         )
     )
 
-    algo = config.build()
+    algo = config.build_algo()
 
     checkpoint_dir = os.path.join(os.path.dirname(__file__), "..", "checkpoints_mappo")
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -150,12 +151,12 @@ def train_self_play():
     )
 
     ray.init(
-        num_cpus=4,
+        ignore_reinit_error=True,
+        num_cpus=8,
         num_gpus=1,
-        object_store_memory=2 * 1024 * 1024 * 1024,
     )
 
-    grid_h, grid_w = 16, 16
+    grid_h, grid_w = 24, 24
     num_players = 2
 
     def env_creator(config):
@@ -164,7 +165,7 @@ def train_self_play():
             grid_h=config.get("grid_h", grid_h),
             grid_w=config.get("grid_w", grid_w),
             num_players=config.get("num_players", num_players),
-            max_turns=config.get("max_turns", 200),
+            max_turns=config.get("max_turns", 500),
         )
 
     from ray.tune.registry import register_env
@@ -193,8 +194,12 @@ def train_self_play():
                 "grid_h": grid_h,
                 "grid_w": grid_w,
                 "num_players": num_players,
-                "max_turns": 200,
+                "max_turns": 500,
             },
+        )
+        .api_stack(
+            enable_rl_module_and_learner=False,
+            enable_env_runner_and_connector_v2=False,
         )
         .framework("torch")
         .multi_agent(
@@ -209,8 +214,8 @@ def train_self_play():
             entropy_coeff=0.02,
             vf_loss_coeff=0.5,
             train_batch_size=4096,
-            sgd_minibatch_size=512,
-            num_sgd_iter=10,
+            minibatch_size=512,
+            num_epochs=5,
             model={
                 "custom_model": "grid_action_mask",
                 "custom_model_config": {
@@ -219,19 +224,15 @@ def train_self_play():
                     "num_obs_channels": 7,
                     "num_action_types": 31,
                 },
+                "vf_share_layers": True,
             },
-        )
-        .env_runners(
-            num_env_runners=2,
-            rollout_fragment_length=256,
-            sample_timeout_s=1200,
         )
         .resources(
             num_gpus=1,
         )
     )
 
-    algo = config.build()
+    algo = config.build_algo()
 
     checkpoint_dir = os.path.join(os.path.dirname(__file__), "..", "checkpoints_selfplay")
     os.makedirs(checkpoint_dir, exist_ok=True)

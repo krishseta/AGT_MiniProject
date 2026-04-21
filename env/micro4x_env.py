@@ -14,10 +14,11 @@ from core.config import (
 
 
 class Micro4XEnv(ParallelEnv):
-    metadata = {"name": "micro4x_v0", "render_modes": []}
+    metadata = {"name": "micro4x_v0", "render_modes": ["human"], "is_parallelizable": True}
 
-    def __init__(self, seed=42, grid_h=16, grid_w=16, num_players=2, max_turns=MAX_TURNS):
+    def __init__(self, seed=42, grid_h=24, grid_w=24, num_players=2, max_turns=MAX_TURNS, render_mode=None):
         super().__init__()
+        self.render_mode = render_mode
         self.grid_h = grid_h
         self.grid_w = grid_w
         self.num_players = num_players
@@ -35,7 +36,7 @@ class Micro4XEnv(ParallelEnv):
                 low=-1.0,
                 high=obs_high,
                 shape=(grid_h, grid_w, NUM_OBS_CHANNELS),
-                dtype=np.float32,
+                dtype=np.float16,
             ),
             "action_mask": spaces.Box(
                 low=0.0,

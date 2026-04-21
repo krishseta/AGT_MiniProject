@@ -37,33 +37,17 @@ def _generate_noise(rng, h, w, octaves=3):
     return noise
 
 
-def _place_starts_farthest_point(rng, h, w, num_players, terrain):
+def _place_diametrical_starts(rng, h, w, num_players, terrain):
     margin = max(2, min(h, w) // 8)
-    valid = np.ones((h, w), dtype=np.bool_)
-    valid[:margin, :] = False
-    valid[-margin:, :] = False
-    valid[:, :margin] = False
-    valid[:, -margin:] = False
-    valid &= (terrain != TerrainType.WATER)
-    valid &= (terrain != TerrainType.MOUNTAIN)
-
-    valid_yx = np.argwhere(valid)
-    if len(valid_yx) < num_players:
-        valid_yx = np.argwhere(np.ones((h, w), dtype=np.bool_))
-
-    first_idx = rng.integers(len(valid_yx))
-    starts = [valid_yx[first_idx]]
-
-    for _ in range(num_players - 1):
-        starts_arr = np.array(starts)
-        dists = np.sum(
-            np.abs(valid_yx[:, np.newaxis, :] - starts_arr[np.newaxis, :, :]),
-            axis=-1
-        )
-        min_dists = np.min(dists, axis=1)
-        best_idx = np.argmax(min_dists)
-        starts.append(valid_yx[best_idx])
-
+    starts = []
+    corners = [
+        [margin, margin],
+        [h - 1 - margin, w - 1 - margin],
+        [margin, w - 1 - margin],
+        [h - 1 - margin, margin]
+    ]
+    for i in range(min(num_players, len(corners))):
+        starts.append(corners[i])
     return np.array(starts, dtype=np.int32)
 
 
@@ -78,7 +62,7 @@ def generate_terrain(h, w, seed, num_players, num_caches=MAX_RESOURCE_CACHES):
     terrain[(height_map > 0.55) & (height_map <= 0.75) & (moisture_map > 0.5)] = TerrainType.FOREST
     terrain[height_map < 0.25] = TerrainType.WATER
 
-    starts = _place_starts_farthest_point(rng, h, w, num_players, terrain)
+    starts = _place_diametrical_starts(rng, h, w, num_players, terrain)
 
     starts_y = starts[:, 0].reshape(-1, 1, 1)
     starts_x = starts[:, 1].reshape(-1, 1, 1)
@@ -100,10 +84,18 @@ def generate_terrain(h, w, seed, num_players, num_caches=MAX_RESOURCE_CACHES):
     cache_valid = (terrain == TerrainType.PLAINS) & (min_dist_to_start > 5)
 
     cache_positions = np.full((num_caches, 2), -1, dtype=np.int32)
+    # Ensure massive 2x2 stag hunt cache in the exact center
+    if num_caches >= 4:
+        ch, cw = h // 2, w // 2
+        cache_positions[0] = [ch - 1, cw - 1]
+        cache_positions[1] = [ch - 1, cw]
+        cache_positions[2] = [ch, cw - 1]
+        cache_positions[3] = [ch, cw]
+        
     valid_for_cache = np.argwhere(cache_valid)
-    if len(valid_for_cache) > 0:
-        n = min(num_caches, len(valid_for_cache))
+    if len(valid_for_cache) > 0 and num_caches > 4:
+        n = min(num_caches - 4, len(valid_for_cache))
         indices = rng.choice(len(valid_for_cache), size=n, replace=False)
-        cache_positions[:n] = valid_for_cache[indices]
+        cache_positions[4:4+n] = valid_for_cache[indices]
 
     return terrain, starts, cache_positions

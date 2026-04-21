@@ -15,24 +15,24 @@ class GridWiseActionMaskModel(TorchModelV2, nn.Module):
         nn.Module.__init__(self)
 
         custom = model_config.get("custom_model_config", {})
-        self.grid_h = custom.get("grid_h", 16)
-        self.grid_w = custom.get("grid_w", 16)
+        self.grid_h = custom.get("grid_h", 24)
+        self.grid_w = custom.get("grid_w", 24)
         num_channels = custom.get("num_obs_channels", 7)
         self.num_actions = custom.get("num_action_types", 31)
 
         self.encoder = nn.Sequential(
-            nn.Conv2d(num_channels, 32, 3, padding=1),
+            nn.Conv2d(num_channels, 16, 3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(32, 64, 3, padding=1),
+            nn.Conv2d(16, 32, 3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(64, 64, 3, padding=1),
+            nn.Conv2d(32, 128, 1),
             nn.ReLU(),
         )
 
-        self.policy_head = nn.Conv2d(64, self.num_actions, 1)
+        self.policy_head = nn.Conv2d(128, self.num_actions, 1)
 
         self.value_pool = nn.AdaptiveAvgPool2d(1)
-        self.value_head = nn.Linear(64, 1)
+        self.value_head = nn.Linear(128, 1)
 
         self._features = None
         self._value = None
@@ -51,7 +51,7 @@ class GridWiseActionMaskModel(TorchModelV2, nn.Module):
         )
 
         inf_mask = torch.clamp(
-            torch.log(action_mask + 1e-10), min=FLOAT_MIN
+            torch.log(action_mask), min=FLOAT_MIN
         )
         masked_logits = logits + inf_mask
 
